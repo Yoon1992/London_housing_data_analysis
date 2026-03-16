@@ -1,0 +1,384 @@
+---
+title: "Untitled"
+author: "Yoon"
+date: "2026-03-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+rm(list = ls())
+gc()
+```
+
+```{r}
+library(data.table)
+library(stringr)
+```
+
+```{r}
+dir.create("D:/housing_data/3_clean", showWarnings = FALSE)
+```
+
+```{r}
+files <- list.files(
+  "D:/housing_data/paid_gov_data",
+  pattern = "pp-20(18|19|20|21|22|23|24|25)",
+  full.names = TRUE
+)
+
+ppd_raw <- rbindlist(lapply(files, fread, header = FALSE), fill = TRUE)
+
+setnames(ppd_raw, c(
+  "Transaction_ID",
+  "Price",
+  "Date_of_Transfer",
+  "Postcode",
+  "Property_Type",
+  "Old_New",
+  "Duration",
+  "PAON",
+  "SAON",
+  "Street",
+  "Locality",
+  "Town_City",
+  "District",
+  "County",
+  "PPD_Category_Type",
+  "Record_Status"
+))
+
+ppd <- copy(ppd_raw)
+
+ppd[, Postcode := as.character(Postcode)]
+ppd[, PAON := as.character(PAON)]
+ppd[, SAON := as.character(SAON)]
+ppd[, District := as.character(District)]
+
+ppd[is.na(Postcode), Postcode := ""]
+ppd[is.na(PAON), PAON := ""]
+ppd[is.na(SAON), SAON := ""]
+ppd[is.na(District), District := ""]
+
+ppd[, Postcode_clean := toupper(gsub("\\s+", "", trimws(Postcode)))]
+ppd[, PAON_clean := toupper(gsub("[^A-Z0-9]", "", trimws(PAON)))]
+ppd[, SAON_clean := toupper(gsub("[^A-Z0-9]", "", trimws(SAON)))]
+ppd[, District_std := toupper(trimws(District))]
+```
+
+```{r}
+london_boroughs <- toupper(c(
+  "City of London",
+  "Barking and Dagenham",
+  "Barnet",
+  "Bexley",
+  "Brent",
+  "Bromley",
+  "Camden",
+  "Croydon",
+  "Ealing",
+  "Enfield",
+  "Greenwich",
+  "Hackney",
+  "Hammersmith and Fulham",
+  "Haringey",
+  "Harrow",
+  "Havering",
+  "Hillingdon",
+  "Hounslow",
+  "Islington",
+  "Kensington and Chelsea",
+  "Kingston upon Thames",
+  "Lambeth",
+  "Lewisham",
+  "Merton",
+  "Newham",
+  "Redbridge",
+  "Richmond upon Thames",
+  "Southwark",
+  "Sutton",
+  "Tower Hamlets",
+  "Waltham Forest",
+  "Wandsworth",
+  "Westminster"
+))
+
+ppd_london <- ppd[District_std %in% london_boroughs]
+
+cat("PPD London rows:", nrow(ppd_london), "\n")
+```
+```{r}
+ppd_london[, is_flat := Property_Type == "F"]
+
+ppd_london[, key_flat := paste0(Postcode_clean, "_", SAON_clean)]
+ppd_london[, key_house := paste0(Postcode_clean, "_", PAON_clean)]
+
+fwrite(ppd_london, "D:/housing_data/3_clean/ppd_london_clean.csv")
+```
+
+
+```{r}
+base_dir <- "D:/housing_data/all-domestic-certificates (1)"
+
+all_dirs <- list.dirs(base_dir, recursive = FALSE, full.names = TRUE)
+london_dirs <- all_dirs[grepl("domestic-E09", basename(all_dirs), ignore.case = TRUE)]
+
+epc_files <- file.path(london_dirs, "certificates.csv")
+epc_files <- epc_files[file.exists(epc_files)]
+
+length(epc_files)
+
+epc_raw <- rbindlist(lapply(epc_files, fread, fill = TRUE), fill = TRUE)
+
+dim(epc_raw)
+```
+
+```{r}
+wanted_cols <- c(
+  "LMK_KEY",
+  "POSTCODE",
+  "ADDRESS1",
+  "ADDRESS2",
+  "ADDRESS3",
+  "CURRENT_ENERGY_RATING",
+  "CURRENT_ENERGY_EFFICIENCY",
+  "POTENTIAL_ENERGY_RATING",
+  "POTENTIAL_ENERGY_EFFICIENCY",
+  "BUILDING_REFERENCE_NUMBER",
+  "PROPERTY_TYPE",
+  "BUILT_FORM",
+  "INSPECTION_DATE",
+  "LODGEMENT_DATE",
+  "TOTAL_FLOOR_AREA",
+  "NUMBER_HABITABLE_ROOMS",
+  "CONSTRUCTION_AGE_BAND",
+  "FLOOR_LEVEL"
+)
+
+wanted_cols <- wanted_cols[wanted_cols %in% names(epc_raw)]
+
+epc_use <- copy(epc_raw[, ..wanted_cols])
+
+for (v in intersect(c("POSTCODE", "ADDRESS1", "ADDRESS2", "ADDRESS3"), names(epc_use))) {
+  epc_use[, (v) := as.character(get(v))]
+  epc_use[is.na(get(v)), (v) := ""]
+}
+```
+
+
+```{r}
+epc_use[, Postcode_clean := toupper(gsub("\\s+", "", trimws(POSTCODE)))]
+epc_use[, ADDRESS1_std := toupper(trimws(gsub(",", "", ADDRESS1)))]
+epc_use[, ADDRESS2_std := toupper(trimws(gsub(",", "", ADDRESS2)))]
+epc_use[, ADDRESS3_std := toupper(trimws(gsub(",", "", ADDRESS3)))]
+```
+
+
+```{r}
+epc_use[, SAON_clean := ""]
+
+epc_use[
+  grepl("^FLAT", ADDRESS1_std),
+  SAON_clean := str_replace_all(
+    str_extract(ADDRESS1_std, "^FLAT\\s*[A-Z0-9]+"),
+    "\\s+",
+    ""
+  )
+]
+
+epc_use[
+  SAON_clean == "" & grepl("^APARTMENT", ADDRESS1_std),
+  SAON_clean := str_replace_all(
+    str_extract(ADDRESS1_std, "^APARTMENT\\s*[A-Z0-9]+"),
+    "\\s+",
+    ""
+  )
+]
+
+epc_use[
+  SAON_clean == "" & grepl("^MAISONETTE", ADDRESS1_std),
+  SAON_clean := str_replace_all(
+    str_extract(ADDRESS1_std, "^MAISONETTE\\s*[A-Z0-9]+"),
+    "\\s+",
+    ""
+  )
+]
+
+epc_use[
+  SAON_clean == "" & grepl("^UNIT", ADDRESS1_std),
+  SAON_clean := str_replace_all(
+    str_extract(ADDRESS1_std, "^UNIT\\s*[A-Z0-9]+"),
+    "\\s+",
+    ""
+  )
+]
+
+epc_use[
+  SAON_clean == "" & grepl("^ROOM", ADDRESS1_std),
+  SAON_clean := str_replace_all(
+    str_extract(ADDRESS1_std, "^ROOM\\s*[A-Z0-9]+"),
+    "\\s+",
+    ""
+  )
+]
+
+epc_use[is.na(SAON_clean), SAON_clean := ""]
+```
+
+```{r}
+epc_use[, PAON_clean := ""]
+
+# first try ADDRESS2 if present
+epc_use[
+  ADDRESS2_std != "" & grepl("^\\d+[A-Z]?", ADDRESS2_std),
+  PAON_clean := str_extract(ADDRESS2_std, "^\\d+[A-Z]?")
+]
+
+# then ADDRESS3 if still blank
+epc_use[
+  PAON_clean == "" & ADDRESS3_std != "" & grepl("^\\d+[A-Z]?", ADDRESS3_std),
+  PAON_clean := str_extract(ADDRESS3_std, "^\\d+[A-Z]?")
+]
+
+# then ADDRESS1 for house-type rows
+epc_use[
+  PAON_clean == "" & grepl("^\\d+[A-Z]?", ADDRESS1_std),
+  PAON_clean := str_extract(ADDRESS1_std, "^\\d+[A-Z]?")
+]
+
+epc_use[, PAON_clean := toupper(gsub("[^A-Z0-9]", "", trimws(PAON_clean)))]
+```
+
+
+```{r}
+epc_use[, key_flat := paste0(Postcode_clean, "_", SAON_clean)]
+epc_use[, key_house := paste0(Postcode_clean, "_", PAON_clean)]
+```
+
+
+```{r}
+epc_fix2 <- copy(epc_use)
+
+if ("LODGEMENT_DATE" %in% names(epc_fix2)) {
+  suppressWarnings(epc_fix2[, LODGEMENT_DATE := as.IDate(LODGEMENT_DATE)])
+  setorder(epc_fix2, key_flat, key_house, -LODGEMENT_DATE)
+} else if ("INSPECTION_DATE" %in% names(epc_fix2)) {
+  suppressWarnings(epc_fix2[, INSPECTION_DATE := as.IDate(INSPECTION_DATE)])
+  setorder(epc_fix2, key_flat, key_house, -INSPECTION_DATE)
+}
+```
+
+
+```{r}
+ppd_london <- fread ("D:/housing_data/3_clean/ppd_london_clean.csv")
+
+
+ppd_flats  <- ppd_london[Property_Type == "F"]
+ppd_houses <- ppd_london[Property_Type != "F"]
+
+cat("PPD flats :", nrow(ppd_flats), "\n")
+cat("PPD houses:", nrow(ppd_houses), "\n")
+```
+
+```{r}
+epc_flat_unique  <- epc_fix2[key_flat  != "" & !duplicated(key_flat)]
+epc_house_unique <- epc_fix2[key_house != "" & !duplicated(key_house)]
+
+cat("Unique EPC flat keys :", nrow(epc_flat_unique), "\n")
+cat("Unique EPC house keys:", nrow(epc_house_unique), "\n")
+```
+
+```{r}
+flat_match_rate <- mean(ppd_flats$key_flat %in% epc_flat_unique$key_flat)
+house_match_rate <- mean(ppd_houses$key_house %in% epc_house_unique$key_house)
+overall_match_rate <- (
+  sum(ppd_flats$key_flat %in% epc_flat_unique$key_flat) +
+  sum(ppd_houses$key_house %in% epc_house_unique$key_house)
+) / nrow(ppd_london)
+
+cat("Flat match rate :", round(flat_match_rate, 4), "\n")
+cat("House match rate:", round(house_match_rate, 4), "\n")
+cat("Overall match   :", round(overall_match_rate, 4), "\n")
+```
+
+```{r}
+flats_joined <- merge(
+  ppd_flats,
+  epc_flat_unique,
+  by = "key_flat",
+  all.x = FALSE
+)
+
+houses_joined <- merge(
+  ppd_houses,
+  epc_house_unique,
+  by = "key_house",
+  all.x = FALSE
+)
+
+ppd_epc_joined <- rbindlist(
+  list(flats_joined, houses_joined),
+  fill = TRUE
+)
+
+dim(ppd_epc_joined)
+```
+
+
+```{r}
+fwrite(ppd_flats, "D:/housing_data/3_clean/ppd_flats.csv")
+fwrite(ppd_houses, "D:/housing_data/3_clean/ppd_houses.csv")
+
+fwrite(epc_flat_unique, "D:/housing_data/3_clean/epc_flat_unique.csv")
+fwrite(epc_house_unique, "D:/housing_data/3_clean/epc_house_unique.csv")
+
+fwrite(ppd_epc_joined, "D:/housing_data/3_clean/ppd_epc_joined.csv")
+saveRDS(ppd_epc_joined, "D:/housing_data/3_clean/ppd_epc_joined.rds")
+
+
+test <- fread("D:/housing_data/3_clean/ppd_epc_joined.csv")
+
+names(test)
+```
+
+
+```{r}
+cat("\nRows:\n")
+cat("PPD London total :", nrow(ppd_london), "\n")
+cat("PPD houses       :", nrow(ppd_houses), "\n")
+cat("PPD flats        :", nrow(ppd_flats), "\n")
+cat("Joined houses    :", nrow(houses_joined), "\n")
+cat("Joined flats     :", nrow(flats_joined), "\n")
+cat("Joined total     :", nrow(ppd_epc_joined), "\n")
+
+cat("\nProperty types in final joined data:\n")
+print(table(ppd_epc_joined$Property_Type))
+
+cat("\nSummary CURRENT_ENERGY_EFFICIENCY:\n")
+print(summary(ppd_epc_joined$CURRENT_ENERGY_EFFICIENCY))
+
+cat("\nMissing values in final joined data:\n")
+print(colSums(is.na(ppd_epc_joined)))
+
+cat("\nFinal columns:\n")
+print(names(ppd_epc_joined))
+```
+
+
+
+
+
+
+
+
+
+

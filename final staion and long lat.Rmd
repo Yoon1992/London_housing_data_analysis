@@ -1,0 +1,241 @@
+---
+title: "Untitled"
+author: "Yoon"
+date: "2026-03-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(data.table)
+
+ppd_epc_joined <- fread("D:/housing_data/3_clean/clean_data/ppd_epc_joined.csv")
+
+dim(ppd_epc_joined)
+names(ppd_epc_joined)
+```
+```{r}
+setDT(ppd_epc_joined)
+
+df_final <- ppd_epc_joined[, .(
+  Transaction_ID,
+  Price,
+  Date_of_Transfer,
+  District,
+  Property_Type,
+  Old_New,
+  Duration,
+  PPD_Category_Type,
+  Record_Status,
+  
+  CURRENT_ENERGY_RATING,
+  CURRENT_ENERGY_EFFICIENCY,
+  POTENTIAL_ENERGY_RATING,
+  POTENTIAL_ENERGY_EFFICIENCY,
+  
+  TOTAL_FLOOR_AREA,
+  NUMBER_HABITABLE_ROOMS,
+  CONSTRUCTION_AGE_BAND,
+  BUILT_FORM,
+  FLOOR_LEVEL,
+  
+  Postcode_clean = Postcode_clean.x
+)]
+```
+
+```{r}
+dim(df_final)
+```
+
+```{r}
+postcode_geo <- fread("D:/housing_data/open_postcode_geo_london.csv")
+
+names(postcode_geo)
+
+head(postcode_geo)
+```
+
+```{r}
+postcode_geo <- postcode_geo[, .(
+  Postcode_clean = V10,
+  latitude = V8,
+  longitude = V9,
+  borough_code = V18,
+  borough_name = V19
+)]
+
+# make sure postcode format matches your housing data
+postcode_geo[, Postcode_clean := toupper(gsub("\\s+", "", Postcode_clean))]
+
+head(postcode_geo)
+```
+
+```{r}
+df_final <- merge(
+  df_final,
+  postcode_geo[, .(Postcode_clean, latitude, longitude)],
+  by = "Postcode_clean",
+  all.x = TRUE
+)
+```
+
+
+```{r}
+sum(is.na(df_final$latitude))
+sum(is.na(df_final$longitude))
+head(df_final[, .(Postcode_clean, latitude, longitude)])
+```
+
+```{r}
+postcode_geo_unique <- postcode_geo[!duplicated(Postcode_clean)]
+```
+
+
+```{r}
+df_final[, c("latitude", "longitude") := NULL]
+```
+
+
+```{r}
+df_final <- merge(
+  df_final,
+  postcode_geo_unique[, .(Postcode_clean, latitude, longitude)],
+  by = "Postcode_clean",
+  all.x = TRUE
+)
+```
+
+
+```{r}
+nrow(df_final)
+```
+
+```{r}
+postcode_geo_unique <- postcode_geo[!duplicated(Postcode_clean)]
+
+df_final[, c("latitude", "longitude") := NULL]
+
+df_final <- merge(
+  df_final,
+  postcode_geo_unique[, .(Postcode_clean, latitude, longitude)],
+  by = "Postcode_clean",
+  all.x = TRUE
+)
+```
+
+```{r}
+nrow(df_final)
+sum(is.na(df_final$latitude))
+
+
+# total rows
+nrow(df_final)
+
+# duplicate transaction IDs
+sum(duplicated(df_final$Transaction_ID))
+
+# missing coordinates
+sum(is.na(df_final$latitude))
+sum(is.na(df_final$longitude))
+
+
+sum(duplicated(df_final$Postcode_clean))
+
+postcode_counts <- df_final[, .N, by = Postcode_clean][order(-N)]
+
+head(postcode_counts, 20)
+
+
+sum(duplicated(postcode_geo_unique$Postcode_clean))
+```
+
+```{r}
+library(data.table)
+
+stations <- fread("D:/housing_data/london_stations.csv")
+
+names(stations)
+head(stations)
+dim(stations)
+```
+
+```{r}
+library(data.table)
+library(geosphere)
+
+# load station file
+stations <- fread("D:/housing_data/london_stations.csv")
+
+# check names first
+names(stations)
+
+# ---- CHANGE THESE COLUMN NAMES IF NEEDED ----
+# example: rename station file columns to standard names
+# replace the left side with your real column names
+setnames(
+  stations,
+  old = c("name", "latitude", "longitude"),
+  new = c("station_name", "station_lat", "station_lon"),
+  skip_absent = TRUE
+)
+
+# keep only needed columns and remove rows with missing coords
+stations <- stations[, .(station_name, station_lat, station_lon)]
+stations <- stations[!is.na(station_lat) & !is.na(station_lon)]
+
+# make sure numeric
+stations[, station_lat := as.numeric(station_lat)]
+stations[, station_lon := as.numeric(station_lon)]
+
+# remove any duplicated stations if needed
+stations <- unique(stations)
+
+# ---- distance to nearest station ----
+station_matrix <- as.matrix(stations[, .(station_lon, station_lat)])
+
+# property coordinate matrix
+prop_matrix <- as.matrix(df_final[, .(longitude, latitude)])
+
+# nearest station distance in km
+dist_mat <- distm(prop_matrix, station_matrix, fun = distHaversine)
+
+df_final[, dist_to_station_km := apply(dist_mat, 1, min) / 1000]
+
+# optional: nearest station name too
+nearest_idx <- max.col(-dist_mat, ties.method = "first")
+df_final[, nearest_station := stations$station_name[nearest_idx]]
+
+# checks
+summary(df_final$dist_to_station_km)
+sum(is.na(df_final$dist_to_station_km))
+
+# save
+saveRDS(df_final, "D:/housing_data/3_clean/ppd_epc_geo_station_joined.rds")
+fwrite(df_final, "D:/housing_data/3_clean/ppd_epc_geo_station_joined.csv")
+```
+
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
